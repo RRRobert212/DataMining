@@ -160,7 +160,7 @@ def calc_aggression_factor(bets, raises, calls, player_dict):
         agg = bets.get(player_id, 0) + raises.get(player_id, 0)
         calls_ = calls.get(player_id, 0)
         player_name = player_dict.get(player_id, player_id)  # fallback to ID if name missing
-        factor[player_name] = round(agg / calls_, 2) if calls_ else float('inf')
+        factor[player_name] = round(agg / calls_, 2) if calls_ else float(0.2)
     return factor
 
 
@@ -375,6 +375,60 @@ def calculate_net_profit(playerDict, grossProfit, buyIn):
 
 
     return {player: round(amount, 2) for player, amount in net_profits.items()}
+
+
+def profit_classifier(playerDict, netProfit):
+    profitClassifier = {name: 0 for name in playerDict.values()}
+
+    for player, amount in netProfit.items():
+        if player in profitClassifier:
+            if amount > 0:
+                profitClassifier[player] = 1
+                #some logs are corrupted and give a net profit of 0. We set it to -1 here so we can delete these rows later
+            elif amount == 0:
+                profitClassifier[player] = -1
+
+    return profitClassifier
+
+
+def count_shows(df, player_dict):
+    """Counts how many times each player shows their cards (voluntarily or at showdown)."""
+    result = {player_name: 0 for player_name in player_dict.values()}
+
+    for entry in df.itertuples(index=False):
+        entry_str = entry.entry.strip()
+
+        if "shows" in entry_str:
+            match = re.search(r'"([^"]+ @ [^"]+)" shows', entry_str)
+            if match:
+                player_name_id = match.group(1)  # e.g. "DLA @ tH-zqsM1Dh"
+                name, player_id = player_name_id.split(" @ ")
+                player_name = player_dict.get(player_id, name)  # fallback to name if ID missing
+                if player_name in result:
+                    result[player_name] += 1
+
+    return result
+
+
+def count_stands(df, player_dict):
+    """Counts how many times each steps away from the game. I.e. they leave, but not because they ran out of money"""
+    result = {player_name: 0 for player_name in player_dict.values()}
+
+    for entry in df.itertuples(index=False):
+        entry_str = entry.entry.strip()
+
+        if "stand" in entry_str:
+            match = re.search(r'"([^"]+ @ [^"]+)" stand', entry_str)
+            if match:
+                player_name_id = match.group(1)  # e.g. "DLA @ tH-zqsM1Dh"
+                name, player_id = player_name_id.split(" @ ")
+                player_name = player_dict.get(player_id, name)  # fallback to name if ID missing
+                if player_name in result:
+                    result[player_name] += 1
+
+    return result
+
+
 
 
 

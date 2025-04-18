@@ -11,11 +11,11 @@ pd.set_option('display.max_columns', None)
 pd.set_option('display.max_rows', None)
 
 
-def constructMatrix():
+def constructMatrix(filepath):
 
     #----------------------------------------------#
     #load the log
-    df = parser.load_log('PokerLogs/24_9_19-log.csv')
+    df = parser.load_log(filepath)
     myDict = parser.create_player_dict(df)
 
 
