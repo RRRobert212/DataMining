@@ -2,9 +2,9 @@
 
 from collections import defaultdict
 import re
-import math
 
-
+#-----------------------------------#
+#counting actions
 def get_action_counts(df, action, player_dict, min_words=5, amount_index=None):
 
     """calculates the total number of specific actions taken by each player through the whole game.
@@ -107,7 +107,46 @@ def get_preflop_actions(df, player_dict, target_action):
         player_dict.get(pid, pid): len(hand_ids)
         for pid, hand_ids in action_counts.items()
     }
+def count_shows(df, player_dict):
+    """Counts how many times each player shows their cards (voluntarily or at showdown)."""
+    result = {player_name: 0 for player_name in player_dict.values()}
 
+    for entry in df.itertuples(index=False):
+        entry_str = entry.entry.strip()
+
+        if "shows" in entry_str:
+            match = re.search(r'"([^"]+ @ [^"]+)" shows', entry_str)
+            if match:
+                player_name_id = match.group(1)
+                name, player_id = player_name_id.split(" @ ")
+                player_name = player_dict.get(player_id, name)
+                if player_name in result:
+                    result[player_name] += 1
+
+    return result
+
+
+def count_stands(df, player_dict):
+    """Counts how many times each steps away from the game. I.e. they leave, but not because they ran out of money"""
+    result = {player_name: 0 for player_name in player_dict.values()}
+
+    for entry in df.itertuples(index=False):
+        entry_str = entry.entry.strip()
+
+        if "stand" in entry_str:
+            match = re.search(r'"([^"]+ @ [^"]+)" stand', entry_str)
+            if match:
+                player_name_id = match.group(1) 
+                name, player_id = player_name_id.split(" @ ")
+                player_name = player_dict.get(player_id, name)
+                if player_name in result:
+                    result[player_name] += 1
+
+    return result
+
+
+#-----------------------------------#
+#common stats, vpip, pfr, agression factor#
 
 def calc_VPIP(df, player_dict):
     """
@@ -129,6 +168,12 @@ def calc_VPIP(df, player_dict):
         raises = preflop_raises.get(player, 0)
         vpip_count = calls + raises
 
+
+        # if calls > 70:
+        #     vpip_count -= 5
+        # elif calls > 50: vpip_count -= 3
+        # elif calls > 40: vpip_count -=2
+        # elif calls > 30: vpip_count -= 1
 
 
         vpip[player] = round((vpip_count / total_hands) * 100, 2) if total_hands > 0 else 0
@@ -164,8 +209,8 @@ def calc_aggression_factor(bets, raises, calls, player_dict):
     return factor
 
 
-#calculate all GrossProfit and loss up to the last hand with buyin: joined the game with, admin updated, sit back, p/l: quits, stand up
-
+#------------------------------#
+#functions to get buy in and profit#
 
 def get_joined_buy_ins(df, player_dict):
     """
@@ -177,7 +222,6 @@ def get_joined_buy_ins(df, player_dict):
     for entry in df.itertuples(index=False):
         entry_str = entry.entry.strip()
 
-        # Case 1: Player joined the game (normal buy-in)
         if "joined the game with a stack of" in entry_str:
             match = re.search(r'"([^"]+ @ [^"]+)" joined the game with a stack of (\d+\.\d+)', entry_str)
             if match:
@@ -190,13 +234,10 @@ def get_joined_buy_ins(df, player_dict):
     return dict(buy_ins)
 
 
-
-
-
 def get_quit_or_stand_stacks_after_final(df, player_dict):
     """
     Sums up stacks for players who quit or stand up,
-    but ignores any that happen AFTER the first 'Player stacks:' line (game end).
+    but ignores any that happen AFTER the first 'Player stacks:' line (game end). This avoids double counting.
     """
     player_stacks = defaultdict(float)
     game_end_found = False
@@ -204,11 +245,11 @@ def get_quit_or_stand_stacks_after_final(df, player_dict):
     for entry in df.itertuples(index=False):
         entry_str = entry.entry.strip()
 
-        # Detect the first 'Player stacks:' line (marks the end of the game)
+        
         if "Player stacks:" in entry_str:
             game_end_found = True
 
-        # Only process quit/stand-up actions AFTER the game end
+        
         if not game_end_found:
             if "quits the game with a stack of" in entry_str:
                 match = re.search(r'"([^"]+ @ [^"]+)" quits the game with a stack of (\d+\.\d+)', entry_str)
@@ -230,7 +271,7 @@ def get_quit_or_stand_stacks_after_final(df, player_dict):
 
 
 
-
+#if players quit or stand up, we count it as profit. When they come back it counts as buy in again
 def get_quit_or_stand_stacks_all(df, player_dict):
     """
     Processes the poker log in reverse order (because log is reverse chronological),
@@ -238,7 +279,7 @@ def get_quit_or_stand_stacks_all(df, player_dict):
     """
     player_stacks = defaultdict(float)
 
-    # Convert to a list first so it can be reversed
+
     entries = list(df.itertuples(index=False))
 
     for entry in entries:
@@ -264,6 +305,7 @@ def get_quit_or_stand_stacks_all(df, player_dict):
 
 
 
+#if the game ends and players haven't quit, their profit is indicated by the final 'player stacks' line
 def get_final_player_stacks(df, player_dict):
     """
     Extracts the first 'Player stacks:' line from the log and returns a dictionary
@@ -274,26 +316,22 @@ def get_final_player_stacks(df, player_dict):
     for entry in df.itertuples(index=False):
         entry_str = entry.entry.strip()
 
-        # Find the first 'Player stacks:' line
+        #find the first player stacks line in the entry (this is the last hand)
         if "Player stacks:" in entry_str:
-            # Parse the player stacks from the line
+            #parse the player stacks line
             matches = re.findall(r'"([^"]+ @ [^"]+)" \((\d+\.\d+)\)', entry_str)
             for match in matches:
-                player_name_id = match[0]  # e.g. "Cal @ E18ViE79KI"
-                stack = float(match[1])    # e.g. 86.19
-                player_name = player_dict.get(player_name_id.split(" @ ")[1], player_name_id.split(" @ ")[0])  # Map player ID to name
+                player_name_id = match[0] 
+                stack = float(match[1])
+                player_name = player_dict.get(player_name_id.split(" @ ")[1], player_name_id.split(" @ ")[0])
                 player_stacks[player_name] = round(stack,2)
-            break  # Only the first occurrence is needed
+            break
 
     return player_stacks
 
 
-
-
-
 #similar to getting buyouts at the end of the game, there are complications with getting buy ins at the beginning
-#we have this function to get all the admin changes to stacks before the game starts
-#we add this to buy ins separatley
+#we have this function to get all the admin changes to stacks except for any that occur before the first hand
 def get_admin_updates_after_game_start(df, player_dict):
     """
     Looks for admin updates (stack changes) that occur after the first starting hand.
@@ -306,7 +344,7 @@ def get_admin_updates_after_game_start(df, player_dict):
     for entry in df[::-1].itertuples(index=False): 
         entry_str = entry.entry.strip()
 
-        # Once we find the 'starting hand #1' line, set game_started to True
+        #once we find the 'starting hand #1' line, set game_started to True
         if "-- starting hand #1" in entry_str:
             game_started = True
             continue
@@ -391,43 +429,7 @@ def profit_classifier(playerDict, netProfit):
     return profitClassifier
 
 
-def count_shows(df, player_dict):
-    """Counts how many times each player shows their cards (voluntarily or at showdown)."""
-    result = {player_name: 0 for player_name in player_dict.values()}
-
-    for entry in df.itertuples(index=False):
-        entry_str = entry.entry.strip()
-
-        if "shows" in entry_str:
-            match = re.search(r'"([^"]+ @ [^"]+)" shows', entry_str)
-            if match:
-                player_name_id = match.group(1)  # e.g. "DLA @ tH-zqsM1Dh"
-                name, player_id = player_name_id.split(" @ ")
-                player_name = player_dict.get(player_id, name)  # fallback to name if ID missing
-                if player_name in result:
-                    result[player_name] += 1
-
-    return result
-
-
-def count_stands(df, player_dict):
-    """Counts how many times each steps away from the game. I.e. they leave, but not because they ran out of money"""
-    result = {player_name: 0 for player_name in player_dict.values()}
-
-    for entry in df.itertuples(index=False):
-        entry_str = entry.entry.strip()
-
-        if "stand" in entry_str:
-            match = re.search(r'"([^"]+ @ [^"]+)" stand', entry_str)
-            if match:
-                player_name_id = match.group(1)  # e.g. "DLA @ tH-zqsM1Dh"
-                name, player_id = player_name_id.split(" @ ")
-                player_name = player_dict.get(player_id, name)  # fallback to name if ID missing
-                if player_name in result:
-                    result[player_name] += 1
-
-    return result
-
+#------------------------------#
 
 
 
