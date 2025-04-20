@@ -1,106 +1,103 @@
 import pandas as pd
-from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import accuracy_score, classification_report, confusion_matrix, roc_curve, auc
-from sklearn.model_selection import cross_val_score
-import matplotlib.pyplot as plt
-import seaborn as sns
+from sklearn.metrics import confusion_matrix
+from sklearn.model_selection import cross_validate, cross_val_predict
 from imblearn.over_sampling import SMOTE
+import matplotlib.pyplot as plt
+import numpy as np
 
-# Load data
+#looaaaad it up
 df = pd.read_csv('../data/all_data_yesorno.csv')
+X = df.drop(columns=['Profit Yes or No'])
+y = df['Profit Yes or No']
 
-# Replace 'ProfitYesNo' with your actual column name for the target variable (0 or 1)
-X = df.drop(columns=['Profit Yes or No'])  # Feature matrix (exclude the target variable)
-y = df['Profit Yes or No']  # Target variable (Profit Yes/No)
-
-# Scaling the features
+#scale everything
 scaler = StandardScaler()
 X_scaled = scaler.fit_transform(X)
 
-# Balance the dataset using SMOTE
+#balance with SMOTE
 smote = SMOTE(random_state=42)
 X_resampled, y_resampled = smote.fit_resample(X_scaled, y)
 
-# Split the data into train and test sets (80/20)
-X_train, X_test, y_train, y_test = train_test_split(X_resampled, y_resampled, test_size=0.2, random_state=42)
-
-# Train a Random Forest Classifier
+#built in random forest model from sklearn
 model = RandomForestClassifier(n_estimators=100, random_state=42)
-model.fit(X_train, y_train)
 
-# Make predictions on the test set
-y_pred = model.predict(X_test)
+#n-fold cross validation
+cv_results = cross_validate(
+    model, 
+    X_resampled, 
+    y_resampled, 
+    cv=13, 
+    scoring=['accuracy', 'precision', 'recall', 'f1', 'roc_auc'],
+    return_train_score=True,
+    return_estimator=True
+)
 
-# Evaluate the model
-accuracy = accuracy_score(y_test, y_pred)
-classification_rep = classification_report(y_test, y_pred)
-conf_matrix = confusion_matrix(y_test, y_pred)
+#----------------------------------#
+#print results
+print("\n=== Cross-Validation Results ===")
+print(f"Mean Accuracy: {cv_results['test_accuracy'].mean():.4f}")
+print(f"Mean Precision: {cv_results['test_precision'].mean():.4f}")
+print(f"Mean Recall: {cv_results['test_recall'].mean():.4f}")
+print(f"Mean F1-Score: {cv_results['test_f1'].mean():.4f}")
+print(f"Mean ROC AUC: {cv_results['test_roc_auc'].mean():.4f}")
 
-# Feature Importance
-feature_importances = model.feature_importances_
+#----------------------------------#
+#generate some predictions to create a confusion matrix
+y_pred_cv = cross_val_predict(model, X_resampled, y_resampled, cv=5)
+conf_matrix_cv = confusion_matrix(y_resampled, y_pred_cv)
 
-# Plot Feature Importances
-plt.figure(figsize=(10, 6))
-plt.barh(X.columns, feature_importances)
-plt.xlabel('Importance')
+#print confusion matrices
+print("\n=== Confusion Matrix (Raw Counts) ===")
+print(conf_matrix_cv)
+conf_matrix_norm = conf_matrix_cv.astype('float') / conf_matrix_cv.sum(axis=1)[:, np.newaxis]
+print("\n=== Confusion Matrix (Normalized) ===")
+print(np.round(conf_matrix_norm, 2))
+
+#----------------------------------#
+#assess feature importance and correlations
+feature_importances = np.mean([
+    est.feature_importances_ for est in cv_results['estimator']
+], axis=0)
+feature_names = df.drop(columns=['Profit Yes or No']).columns
+
+
+feature_corr = df.corr()['Profit Yes or No'].drop('Profit Yes or No')
+
+#show both in one graph
+feature_analysis = pd.DataFrame({
+    'Feature': feature_names,
+    'Importance': feature_importances,
+    'Correlation': [feature_corr[f] for f in feature_names]
+}).sort_values('Importance', ascending=False)
+
+#----------------------------------#
+#plotting
+plt.figure(figsize=(12, 8))
+bars = plt.barh(
+    feature_analysis['Feature'],
+    feature_analysis['Importance'],
+    color=np.where(feature_analysis['Correlation'] > 0, 'green', 'red'),
+    alpha=0.6
+)
+for i, (imp, corr) in enumerate(zip(feature_analysis['Importance'], 
+                                   feature_analysis['Correlation'])):
+    plt.text(imp/2, i, f'Corr: {corr:.2f}', va='center', color='white', fontweight='bold')
+
+plt.xlabel('Feature Importance')
 plt.ylabel('Feature')
-plt.title('Feature Importance from Random Forest')
+plt.title('Feature Importance and Profitability Correlation\n(Green = Positive, Red = Negative)')
+plt.gca().invert_yaxis()
+plt.grid(axis='x', linestyle='--', alpha=0.3)
+plt.legend(
+    handles=[
+        plt.Rectangle((0,0),1,1,fc='green',alpha=0.6),
+        plt.Rectangle((0,0),1,1,fc='red',alpha=0.6)
+    ],
+    labels=['Positive Correlation', 'Negative Correlation'],
+    loc='lower right'
+)
+plt.tight_layout()
 plt.show()
-
-# Confusion Matrix Plot
-plt.figure(figsize=(7, 5))
-sns.heatmap(conf_matrix, annot=True, fmt="d", cmap='Blues', xticklabels=['Not Profitable', 'Profitable'], yticklabels=['Not Profitable', 'Profitable'])
-plt.ylabel('Actual')
-plt.xlabel('Predicted')
-plt.title('Confusion Matrix')
-plt.show()
-
-# ROC Curve Plot
-fpr, tpr, thresholds = roc_curve(y_test, model.predict_proba(X_test)[:, 1])
-roc_auc = auc(fpr, tpr)
-
-plt.figure(figsize=(7, 5))
-plt.plot(fpr, tpr, color='darkorange', lw=2, label='ROC curve (area = %0.2f)' % roc_auc)
-plt.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--')
-plt.xlim([0.0, 1.0])
-plt.ylim([0.0, 1.05])
-plt.xlabel('False Positive Rate')
-plt.ylabel('True Positive Rate')
-plt.title('Receiver Operating Characteristic (ROC) Curve')
-plt.legend(loc="lower right")
-plt.show()
-
-# Cross-validation (for additional performance evaluation)
-cross_val_acc = cross_val_score(model, X_resampled, y_resampled, cv=5, scoring='accuracy')
-print(f"Cross-validated Accuracy: {cross_val_acc.mean():.4f}")
-
-# Additional Evaluation
-print(f"Random Forest Classifier Accuracy (Test Set): {accuracy:.4f}")
-print("Classification Report (Test Set):")
-print(classification_rep)
-print("Confusion Matrix (Test Set):")
-print(conf_matrix)
-
-# Correlation between features and target (ProfitYesNo)
-df_corr = df.copy()
-df_corr['Profit Yes or No'] = y
-correlation_matrix = df_corr.corr()
-
-# Plot the correlation of features with the target (ProfitYesNo)
-plt.figure(figsize=(10, 6))
-sns.heatmap(correlation_matrix[['Profit Yes or No']].sort_values(by='Profit Yes or No', ascending=False), annot=True, cmap='coolwarm')
-plt.title('Feature Correlation with Profit (Yes/No)')
-plt.show()
-
-# Visualize the relationship between a key feature (e.g., 'AggressionFactor') and the target variable
-# Replace 'AggressionFactor' with the actual feature name that you want to analyze
-plt.figure(figsize=(8, 6))
-sns.boxplot(x='Profit Yes or No', y='AggressionFactor', data=df)
-plt.title('Aggression Factor vs Profitability')
-plt.xlabel('Profit (0 = No, 1 = Yes)')
-plt.ylabel('Aggression Factor')
-plt.show()
-
-# You can add similar plots for other features as needed (e.g., scatter plots or boxplots for 'AggressionFactor', etc.)
+#----------------------------------#
